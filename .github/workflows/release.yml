@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify tag and version
+        shell: bash
+        env:
+          CODEX_EXPORT_UPDATE_PUBLIC_KEY: ${{ vars.CODEX_EXPORT_UPDATE_PUBLIC_KEY }}
+          CODEX_EXPORT_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_EXPORT_UPDATE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          source scripts/version.sh
+          load_project_version VERSION
+          test "${GITHUB_REF_NAME}" = "v${MARKETING_VERSION}"
+          test -n "${CODEX_EXPORT_UPDATE_PUBLIC_KEY}"
+          test -n "${CODEX_EXPORT_UPDATE_PRIVATE_KEY}"
+
+      - name: Test
+        run: >-
+          swift test
+          -Xswiftc -strict-concurrency=complete
+          -Xswiftc -warnings-as-errors
+
+      - name: Build signed update assets
+        shell: bash
+        env:
+          CODEX_EXPORT_UPDATE_REPOSITORY: ${{ github.repository }}
+          CODEX_EXPORT_UPDATE_PUBLIC_KEY: ${{ vars.CODEX_EXPORT_UPDATE_PUBLIC_KEY }}
+          CODEX_EXPORT_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_EXPORT_UPDATE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          OUTPUT_ROOT="${RUNNER_TEMP}/CodexExportRelease" ./scripts/package-release.sh
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/CodexExportRelease"
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            "${root}/Codex Export ${version}.zip" \
+            "${root}/Codex Export ${version} Source.zip" \
+            "${root}/Codex-Export-update.json" \
+            "${root}/Codex-Export-update.sig" \
+            --verify-tag \
+            --title "Codex Export ${GITHUB_REF_NAME#v}" \
+            --generate-notes

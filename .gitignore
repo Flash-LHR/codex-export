@@ -1,0 +1,8 @@
+.build/
+dist/
+outputs/
+.DS_Store
+*.swp
+*.xcuserstate
+__pycache__/
+*.pyc
