@@ -9,9 +9,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_DIR/outputs}"
 load_project_version "$PROJECT_DIR/VERSION"
 
 RELEASE_NAME="Codex Export $MARKETING_VERSION"
-SOURCE_NAME="$RELEASE_NAME Source"
 RELEASE_ZIP_NAME="Codex-Export-$MARKETING_VERSION.zip"
-SOURCE_ZIP_NAME="Codex-Export-$MARKETING_VERSION-Source.zip"
 UPDATE_SIGNING_ENABLED=0
 
 if [[ -n "${CODEX_EXPORT_UPDATE_REPOSITORY:-}" \
@@ -53,18 +51,13 @@ case "$OUTPUT_ROOT" in
         ;;
 esac
 
-RELEASE_DIR="$OUTPUT_ROOT/$RELEASE_NAME"
-SOURCE_DIR="$OUTPUT_ROOT/$SOURCE_NAME"
 RELEASE_ZIP="$OUTPUT_ROOT/$RELEASE_ZIP_NAME"
-SOURCE_ZIP="$OUTPUT_ROOT/$SOURCE_ZIP_NAME"
 UPDATE_MANIFEST="$OUTPUT_ROOT/Codex-Export-update.json"
 UPDATE_SIGNATURE="$OUTPUT_ROOT/Codex-Export-update.sig"
 
 STAGING_ROOT="$(mktemp -d "$OUTPUT_ROOT/.codex-export-package.XXXXXX")"
 STAGED_RELEASE="$STAGING_ROOT/$RELEASE_NAME"
-STAGED_SOURCE="$STAGING_ROOT/$SOURCE_NAME"
 STAGED_RELEASE_ZIP="$STAGING_ROOT/$RELEASE_ZIP_NAME"
-STAGED_SOURCE_ZIP="$STAGING_ROOT/$SOURCE_ZIP_NAME"
 STAGED_UPDATE_MANIFEST="$STAGING_ROOT/Codex-Export-update.json"
 STAGED_UPDATE_SIGNATURE="$STAGING_ROOT/Codex-Export-update.sig"
 BACKUP_ROOT="$STAGING_ROOT/previous"
@@ -72,13 +65,8 @@ DIST_APP="$PROJECT_DIR/dist/Codex Export.app"
 DIST_BACKUP="$STAGING_ROOT/previous-dist-app"
 DIST_HAD_ORIGINAL=0
 DIST_REBUILD_STARTED=0
-targets=("$RELEASE_DIR" "$SOURCE_DIR" "$RELEASE_ZIP" "$SOURCE_ZIP")
-staged=(
-    "$STAGED_RELEASE"
-    "$STAGED_SOURCE"
-    "$STAGED_RELEASE_ZIP"
-    "$STAGED_SOURCE_ZIP"
-)
+targets=("$RELEASE_ZIP")
+staged=("$STAGED_RELEASE_ZIP")
 if [[ "$UPDATE_SIGNING_ENABLED" -eq 1 ]]; then
     targets+=("$UPDATE_MANIFEST" "$UPDATE_SIGNATURE")
     staged+=("$STAGED_UPDATE_MANIFEST" "$STAGED_UPDATE_SIGNATURE")
@@ -131,7 +119,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mkdir -p "$STAGED_RELEASE" "$STAGED_SOURCE" "$BACKUP_ROOT"
+mkdir -p "$STAGED_RELEASE" "$BACKUP_ROOT"
 if [[ -L "$DIST_APP" ]]; then
     echo "Refusing symbolic-link dist app: $DIST_APP" >&2
     exit 1
@@ -148,41 +136,11 @@ for item in README.md LICENSE THIRD_PARTY_NOTICES.md; do
     cp "$PROJECT_DIR/$item" "$STAGED_RELEASE/$item"
 done
 
-source_items=(
-    .github
-    .gitignore
-    LICENSE
-    Package.swift
-    README.md
-    Resources
-    Sources
-    Tests
-    THIRD_PARTY_NOTICES.md
-    VERSION
-    scripts
-)
-for item in "${source_items[@]}"; do
-    /usr/bin/ditto "$PROJECT_DIR/$item" "$STAGED_SOURCE/$item"
-done
-
-if find "$STAGED_SOURCE" \
-    \( -name .build -o -name dist -o -name .DS_Store \) \
-    -print -quit | grep -q .; then
-    echo "Source package contains a generated or system artifact" >&2
-    exit 1
-fi
-if LC_ALL=C grep -RlaF "$PROJECT_DIR" "$STAGED_SOURCE" >/dev/null; then
-    echo "Source package contains a local absolute build path" >&2
-    exit 1
-fi
-
 (
     cd "$STAGING_ROOT"
     /usr/bin/zip -qry --symlinks "$STAGED_RELEASE_ZIP" "$RELEASE_NAME"
-    /usr/bin/zip -qry --symlinks "$STAGED_SOURCE_ZIP" "$SOURCE_NAME"
 )
 unzip -tq "$STAGED_RELEASE_ZIP" >/dev/null
-unzip -tq "$STAGED_SOURCE_ZIP" >/dev/null
 
 if [[ "$UPDATE_SIGNING_ENABLED" -eq 1 ]]; then
     swift "$PROJECT_DIR/scripts/make-update-manifest.swift" \

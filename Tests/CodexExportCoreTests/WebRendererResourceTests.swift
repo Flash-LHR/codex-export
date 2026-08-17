@@ -71,6 +71,10 @@ final class WebRendererResourceTests: XCTestCase {
         XCTAssertNotNil(WebMarkdownRenderer.warning(forHeight: 100_001))
     }
 
+    func testSingleImageHeightLimitIsFourHundredThousandPixels() {
+        XCTAssertEqual(WebMarkdownRenderer.maximumHeight, 400_000)
+    }
+
     func testTimeoutAndCancellationRetireTheMutableWebView() {
         XCTAssertTrue(WebMarkdownRenderer.requiresFreshWebView(
             after: WebMarkdownRendererError.timedOut

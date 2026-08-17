@@ -29,7 +29,7 @@ metadata are excluded.
 ## Install
 
 1. Open the [latest Release](https://github.com/Flash-LHR/codex-export/releases/latest)
-   and download `Codex-Export-<version>.zip` — not the Source archive.
+   and download `Codex-Export-<version>.zip` from **Assets**.
 2. Unzip it and move `Codex Export.app` into `/Applications`.
 3. On the first launch, Control-click the app and choose **Open**. If macOS
    still blocks it, allow it once in **System Settings → Privacy & Security**.

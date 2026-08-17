@@ -67,7 +67,6 @@ jobs:
           trap cleanup EXIT
           gh release create "${GITHUB_REF_NAME}" \
             "${root}/Codex-Export-${version}.zip" \
-            "${root}/Codex-Export-${version}-Source.zip" \
             "${root}/Codex-Export-update.json" \
             "${root}/Codex-Export-update.sig" \
             --draft \
@@ -82,7 +81,6 @@ jobs:
             | LC_ALL=C sort)"
           expected_assets="$(printf '%s\n' \
             "Codex-Export-${version}.zip" \
-            "Codex-Export-${version}-Source.zip" \
             "Codex-Export-update.json" \
             "Codex-Export-update.sig" \
             | LC_ALL=C sort)"

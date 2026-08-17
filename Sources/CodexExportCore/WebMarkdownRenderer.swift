@@ -53,7 +53,7 @@ public enum WebMarkdownRendererError: Error, Equatable, LocalizedError {
 public final class WebMarkdownRenderer: NSObject {
     public static let outputWidth = 1_080
     static let warningHeight = 100_000
-    static let maximumHeight = 200_000
+    static let maximumHeight = 400_000
     static let maximumEncodedPNGBytes = 64 * 1_024 * 1_024
     private static let viewportHeight = 2_048
     private static let maximumInputUTF16Count = 2_000_000
