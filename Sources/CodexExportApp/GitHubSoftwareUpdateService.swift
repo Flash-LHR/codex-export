@@ -40,9 +40,6 @@ private enum GitHubSoftwareUpdateError: LocalizedError {
     case invalidResponse
     case httpStatus(Int)
     case releaseMetadataTooLarge
-    case missingReleaseAsset(String)
-    case releaseVersionMismatch
-    case releaseAssetMismatch
     case updateArchiveTooLarge
     case downloadedSizeMismatch
     case extractionFailed
@@ -63,12 +60,6 @@ private enum GitHubSoftwareUpdateError: LocalizedError {
             return "GitHub 更新请求失败（HTTP \(status)）。"
         case .releaseMetadataTooLarge:
             return "更新元数据异常。"
-        case let .missingReleaseAsset(name):
-            return "GitHub Release 缺少 \(name)。"
-        case .releaseVersionMismatch:
-            return "Release 标签与签名清单版本不一致。"
-        case .releaseAssetMismatch:
-            return "Release 资产与签名清单不一致。"
         case .updateArchiveTooLarge:
             return "更新包超过允许的大小。"
         case .downloadedSizeMismatch:
@@ -96,32 +87,6 @@ private enum GitHubSoftwareUpdateError: LocalizedError {
 }
 
 actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
-    private struct GitHubRelease: Decodable {
-        struct Asset: Decodable {
-            let name: String
-            let browserDownloadURL: URL
-            let size: UInt64
-
-            private enum CodingKeys: String, CodingKey {
-                case name
-                case browserDownloadURL = "browser_download_url"
-                case size
-            }
-        }
-
-        let tagName: String
-        let draft: Bool
-        let prerelease: Bool
-        let assets: [Asset]
-
-        private enum CodingKeys: String, CodingKey {
-            case tagName = "tag_name"
-            case draft
-            case prerelease
-            case assets
-        }
-    }
-
     private static let maximumMetadataBytes = 64 * 1_024
     private static let maximumArchiveBytes: UInt64 = 256 * 1_024 * 1_024
     private static let failedInstallerRetryInterval: TimeInterval = 6 * 60 * 60
@@ -149,44 +114,19 @@ actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
         currentVersion: String,
         currentBuild: Int
     ) async throws -> SoftwareUpdateCandidate? {
-        var request = URLRequest(url: configuration.latestReleaseAPIURL)
-        request.timeoutInterval = 30
-        request.setValue(
-            "application/vnd.github+json",
-            forHTTPHeaderField: "Accept"
+        let manifestURL = configuration.latestReleaseAssetURL(
+            named: SoftwareUpdateConfiguration.manifestAssetName
         )
-        request.setValue("Codex-Export/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-
-        let releaseData = try await fetchData(
-            request: request,
-            maximumBytes: Self.maximumMetadataBytes
+        let signatureURL = configuration.latestReleaseAssetURL(
+            named: SoftwareUpdateConfiguration.signatureAssetName
         )
-        let release: GitHubRelease
-        do {
-            release = try JSONDecoder().decode(GitHubRelease.self, from: releaseData)
-        } catch {
-            throw GitHubSoftwareUpdateError.invalidResponse
-        }
-        guard !release.draft, !release.prerelease else { return nil }
-
-        let manifestAsset = try requiredAsset(
-            named: SoftwareUpdateConfiguration.manifestAssetName,
-            in: release.assets
-        )
-        let signatureAsset = try requiredAsset(
-            named: SoftwareUpdateConfiguration.signatureAssetName,
-            in: release.assets
-        )
-        try validateReleaseDownloadURL(manifestAsset.browserDownloadURL)
-        try validateReleaseDownloadURL(signatureAsset.browserDownloadURL)
 
         async let manifestData = fetchData(
-            request: URLRequest(url: manifestAsset.browserDownloadURL),
+            request: URLRequest(url: manifestURL),
             maximumBytes: Self.maximumMetadataBytes
         )
         async let signatureData = fetchData(
-            request: URLRequest(url: signatureAsset.browserDownloadURL),
+            request: URLRequest(url: signatureURL),
             maximumBytes: 128
         )
         let authenticated = try SoftwareUpdateSecurity.authenticateManifest(
@@ -195,11 +135,13 @@ actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
             publicKey: configuration.publicKey,
             expectedBundleIdentifier: configuration.bundleIdentifier
         )
-
-        let releaseVersion = try SemanticVersion(release.tagName)
-        guard releaseVersion == authenticated.semanticVersion else {
-            throw GitHubSoftwareUpdateError.releaseVersionMismatch
+        let expectedAssetName = "Codex-Export-\(authenticated.semanticVersion).zip"
+        guard authenticated.manifest.assetName == expectedAssetName else {
+            throw SoftwareUpdateError.invalidAssetName(
+                authenticated.manifest.assetName
+            )
         }
+
         guard authenticated.manifest.build <= UInt64(Int.max) else {
             throw SoftwareUpdateError.invalidBuildNumber(
                 authenticated.manifest.build
@@ -219,14 +161,9 @@ actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
             over: current
         )
 
-        let archiveAsset = try requiredAsset(
-            named: authenticated.manifest.assetName,
-            in: release.assets
+        let archiveURL = try latestReleaseAssetURL(
+            named: authenticated.manifest.assetName
         )
-        try validateReleaseDownloadURL(archiveAsset.browserDownloadURL)
-        guard archiveAsset.size == authenticated.manifest.size else {
-            throw GitHubSoftwareUpdateError.releaseAssetMismatch
-        }
         try rejectRecentInstallerFailure(
             version: authenticated.semanticVersion.description,
             build: Int(authenticated.manifest.build)
@@ -236,7 +173,7 @@ actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
             version: authenticated.semanticVersion.description,
             build: Int(authenticated.manifest.build),
             assetName: authenticated.manifest.assetName,
-            assetURL: archiveAsset.browserDownloadURL,
+            assetURL: archiveURL,
             sha256: authenticated.normalizedSHA256,
             size: authenticated.manifest.size
         )
@@ -248,7 +185,10 @@ actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
         guard candidate.size <= Self.maximumArchiveBytes else {
             throw GitHubSoftwareUpdateError.updateArchiveTooLarge
         }
-        try validateReleaseDownloadURL(candidate.assetURL)
+        try validateReleaseDownloadURL(
+            candidate.assetURL,
+            assetName: candidate.assetName
+        )
 
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("CodexExportUpdates", isDirectory: true)
@@ -443,22 +383,21 @@ actor GitHubSoftwareUpdateService: SoftwareUpdateServicing {
         }
     }
 
-    private func requiredAsset(
-        named name: String,
-        in assets: [GitHubRelease.Asset]
-    ) throws -> GitHubRelease.Asset {
-        let matches = assets.filter { $0.name == name }
-        guard matches.count == 1, let asset = matches.first else {
-            throw GitHubSoftwareUpdateError.missingReleaseAsset(name)
+    private func latestReleaseAssetURL(named assetName: String) throws -> URL {
+        guard !assetName.unicodeScalars.contains(where: {
+            CharacterSet.whitespacesAndNewlines.contains($0)
+        }) else {
+            throw SoftwareUpdateError.invalidAssetName(assetName)
         }
-        return asset
+        return configuration.latestReleaseAssetURL(named: assetName)
     }
 
-    private func validateReleaseDownloadURL(_ url: URL) throws {
-        let expectedPathPrefix = "/\(configuration.repository)/releases/download/"
-        guard url.scheme?.lowercased() == "https",
-              url.host?.lowercased() == "github.com",
-              url.path.lowercased().hasPrefix(expectedPathPrefix.lowercased()) else {
+    private func validateReleaseDownloadURL(
+        _ url: URL,
+        assetName: String
+    ) throws {
+        let expectedURL = try latestReleaseAssetURL(named: assetName)
+        guard url == expectedURL else {
             throw GitHubSoftwareUpdateError.invalidResponse
         }
     }

@@ -216,6 +216,7 @@ private func digestZIP(at url: URL) throws -> AssetDigest {
           assetName != "..",
           !assetName.contains("/"),
           !assetName.contains("\\"),
+          assetName.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
           !assetName.utf8.contains(0) else {
         throw ToolError.message("ZIP has an unsafe asset name: \(assetName)")
     }
@@ -381,6 +382,12 @@ private func run() throws {
     try validateBundleIdentifier(options.bundleIdentifier)
     try validateOutputPaths(options)
     let version = try parseVersion(at: options.versionFile)
+    let expectedAssetName = "Codex-Export-\(version.version).zip"
+    guard options.zip.lastPathComponent == expectedAssetName else {
+        throw ToolError.message(
+            "Update ZIP must be named \(expectedAssetName)"
+        )
+    }
     let digest = try digestZIP(at: options.zip)
     let key = try signingKey()
 

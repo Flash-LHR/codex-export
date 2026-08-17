@@ -55,11 +55,38 @@ jobs:
           set -euo pipefail
           root="${RUNNER_TEMP}/CodexExportRelease"
           version="${GITHUB_REF_NAME#v}"
+          created=0
+          cleanup() {
+            status=$?
+            trap - EXIT
+            if [[ "$created" -eq 1 ]]; then
+              gh release delete "${GITHUB_REF_NAME}" --yes || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
           gh release create "${GITHUB_REF_NAME}" \
-            "${root}/Codex Export ${version}.zip" \
-            "${root}/Codex Export ${version} Source.zip" \
+            "${root}/Codex-Export-${version}.zip" \
+            "${root}/Codex-Export-${version}-Source.zip" \
             "${root}/Codex-Export-update.json" \
             "${root}/Codex-Export-update.sig" \
+            --draft \
             --verify-tag \
             --title "Codex Export ${GITHUB_REF_NAME#v}" \
             --generate-notes
+          created=1
+
+          actual_assets="$(gh release view "${GITHUB_REF_NAME}" \
+            --json assets \
+            --jq '.assets[].name' \
+            | LC_ALL=C sort)"
+          expected_assets="$(printf '%s\n' \
+            "Codex-Export-${version}.zip" \
+            "Codex-Export-${version}-Source.zip" \
+            "Codex-Export-update.json" \
+            "Codex-Export-update.sig" \
+            | LC_ALL=C sort)"
+          test "$actual_assets" = "$expected_assets"
+
+          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          created=0

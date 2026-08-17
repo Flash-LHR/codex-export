@@ -15,8 +15,12 @@ struct SoftwareUpdateConfiguration: Sendable {
         URL(string: "https://github.com/\(repository)")!
     }
 
-    var latestReleaseAPIURL: URL {
-        URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
+    func latestReleaseAssetURL(named assetName: String) -> URL {
+        repositoryURL
+            .appendingPathComponent("releases", isDirectory: true)
+            .appendingPathComponent("latest", isDirectory: true)
+            .appendingPathComponent("download", isDirectory: true)
+            .appendingPathComponent(assetName, isDirectory: false)
     }
 
     static func load(

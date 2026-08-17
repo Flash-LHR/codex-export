@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import XCTest
 @testable import CodexExportApp
+@testable import CodexExportCore
 @testable import CodexExportFeature
 
 final class GitHubSoftwareUpdateServiceTests: XCTestCase {
@@ -11,7 +12,7 @@ final class GitHubSoftwareUpdateServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testAuthenticatesStableLatestReleaseAndReturnsCandidate() async throws {
+    func testAuthenticatesLatestDownloadManifestAndReturnsCandidate() async throws {
         let fixture = try UpdateFixture()
         MockURLProtocol.install { request in
             try fixture.response(for: request)
@@ -26,22 +27,49 @@ final class GitHubSoftwareUpdateServiceTests: XCTestCase {
         XCTAssertEqual(candidate?.version, "0.3.41")
         XCTAssertEqual(candidate?.build, 42)
         XCTAssertEqual(candidate?.assetName, fixture.assetName)
+        XCTAssertEqual(candidate?.assetURL, fixture.archiveURL)
         XCTAssertEqual(candidate?.sha256, fixture.assetSHA256)
         XCTAssertEqual(candidate?.size, UInt64(fixture.archiveData.count))
     }
 
-    func testIgnoresPrereleaseEvenWhenManifestIsPresent() async throws {
-        let fixture = try UpdateFixture(prerelease: true)
+    func testRejectsSignedManifestWithWhitespaceInAssetName() async throws {
+        let fixture = try UpdateFixture(assetName: "Codex Export 0.3.41.zip")
         MockURLProtocol.install { request in
             try fixture.response(for: request)
         }
 
-        let candidate = try await fixture.makeService().latestUpdate(
-            currentVersion: "0.3.40",
-            currentBuild: 41
-        )
+        do {
+            _ = try await fixture.makeService().latestUpdate(
+                currentVersion: "0.3.40",
+                currentBuild: 41
+            )
+            XCTFail("Expected a whitespace-containing asset name to fail")
+        } catch let error as SoftwareUpdateError {
+            XCTAssertEqual(
+                error,
+                .invalidAssetName("Codex Export 0.3.41.zip")
+            )
+        }
+    }
 
-        XCTAssertNil(candidate)
+    func testRejectsSignedManifestWithUnexpectedArchiveName() async throws {
+        let fixture = try UpdateFixture(assetName: "CodexExport-0.3.41.zip")
+        MockURLProtocol.install { request in
+            try fixture.response(for: request)
+        }
+
+        do {
+            _ = try await fixture.makeService().latestUpdate(
+                currentVersion: "0.3.40",
+                currentBuild: 41
+            )
+            XCTFail("Expected a noncanonical asset name to fail")
+        } catch let error as SoftwareUpdateError {
+            XCTAssertEqual(
+                error,
+                .invalidAssetName("CodexExport-0.3.41.zip")
+            )
+        }
     }
 
     func testRejectsTamperedManifestSignature() async throws {
@@ -103,7 +131,7 @@ final class GitHubSoftwareUpdateServiceTests: XCTestCase {
             version: "0.3.41",
             build: 42,
             assetName: archiveURL.lastPathComponent,
-            assetURL: URL(string: "https://github.com/example/codex-export/releases/download/v0.3.41/\(archiveURL.lastPathComponent)")!,
+            assetURL: URL(string: "https://github.com/example/codex-export/releases/latest/download/\(archiveURL.lastPathComponent)")!,
             sha256: digest,
             size: UInt64(archiveData.count)
         )
@@ -520,18 +548,18 @@ private final class InstallerFixture {
 
 private struct UpdateFixture: @unchecked Sendable {
     let repository = "example/codex-export"
-    let assetName = "Codex Export 0.3.41.zip"
+    let assetName: String
     let archiveData = Data("PK\u{3}\u{4}fake-update".utf8)
     let manifestData: Data
     let signatureData: Data
     let publicKey: Data
-    let releaseData: Data
     let assetSHA256: String
 
     init(
-        prerelease: Bool = false,
+        assetName: String = "Codex-Export-0.3.41.zip",
         tamperSignature: Bool = false
     ) throws {
+        self.assetName = assetName
         let privateKey = Curve25519.Signing.PrivateKey()
         publicKey = privateKey.publicKey.rawRepresentation
         assetSHA256 = SHA256.hash(data: archiveData)
@@ -557,30 +585,12 @@ private struct UpdateFixture: @unchecked Sendable {
         }
         signatureData = signature
 
-        let base = "https://github.com/\(repository)/releases/download/v0.3.41"
-        let assets: [[String: Any]] = [
-            [
-                "name": SoftwareUpdateConfiguration.manifestAssetName,
-                "browser_download_url": "\(base)/Codex-Export-update.json",
-                "size": manifestData.count,
-            ],
-            [
-                "name": SoftwareUpdateConfiguration.signatureAssetName,
-                "browser_download_url": "\(base)/Codex-Export-update.sig",
-                "size": signatureData.count,
-            ],
-            [
-                "name": assetName,
-                "browser_download_url": "\(base)/Codex%20Export%200.3.41.zip",
-                "size": archiveData.count,
-            ],
-        ]
-        releaseData = try JSONSerialization.data(withJSONObject: [
-            "tag_name": "v0.3.41",
-            "draft": false,
-            "prerelease": prerelease,
-            "assets": assets,
-        ])
+    }
+
+    var archiveURL: URL {
+        URL(
+            string: "https://github.com/\(repository)/releases/latest/download/\(assetName)"
+        )!
     }
 
     func makeService() -> GitHubSoftwareUpdateService {
@@ -599,12 +609,19 @@ private struct UpdateFixture: @unchecked Sendable {
 
     func response(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
         let url = try XCTUnwrap(request.url)
+        XCTAssertEqual(url.scheme, "https")
+        XCTAssertEqual(url.host, "github.com")
+        let basePath = "/\(repository)/releases/latest/download/"
         let data: Data
-        switch url.lastPathComponent {
-        case "latest": data = releaseData
-        case SoftwareUpdateConfiguration.manifestAssetName: data = manifestData
-        case SoftwareUpdateConfiguration.signatureAssetName: data = signatureData
-        default: data = archiveData
+        switch url.path {
+        case basePath + SoftwareUpdateConfiguration.manifestAssetName:
+            data = manifestData
+        case basePath + SoftwareUpdateConfiguration.signatureAssetName:
+            data = signatureData
+        case basePath + assetName:
+            data = archiveData
+        default:
+            throw URLError(.unsupportedURL)
         }
         return (
             HTTPURLResponse(

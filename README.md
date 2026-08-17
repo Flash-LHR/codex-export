@@ -173,7 +173,8 @@ export CODEX_EXPORT_UPDATE_PRIVATE_KEY=...base64-private-key...
 ```
 
 Pushing a tag that exactly matches `v$(MARKETING_VERSION)` runs the release
-workflow. It publishes the binary/source ZIP files plus the signed
+workflow. It publishes `Codex-Export-<version>.zip`,
+`Codex-Export-<version>-Source.zip`, and the signed
 `Codex-Export-update.json` and `Codex-Export-update.sig` assets. Local builds
 without this configuration remain runnable, but the Update and GitHub controls
 are disabled rather than contacting an unknown repository.
@@ -188,8 +189,9 @@ users may need the one-time Control-click → Open step described above.
 Codex Export has no analytics and does not log conversation text. Conversation
 history is requested only from the local Codex App Server. When updates are
 configured, the app contacts the configured public GitHub repository to read
-Release metadata. It downloads an authenticated update only while automatic
-installation is enabled. No conversation content is included in those requests.
+the signed assets from its latest stable Release. It downloads an authenticated
+update only while automatic installation is enabled. No conversation content is
+included in those requests.
 
 ## License
 
