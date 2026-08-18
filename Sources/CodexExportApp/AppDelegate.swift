@@ -47,7 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.releaseSoftwareUpdateInstallationReservation()
         },
         requestTermination: {
-            NSApplication.shared.terminate(nil)
+            DeferredApplicationTermination.schedule {
+                NSApplication.shared.terminate(nil)
+            }
         }
     )
 
