@@ -162,6 +162,7 @@ if LC_ALL=C /usr/bin/strings - "$MACOS_DIR/CodexExportApp" \
 fi
 
 "$MACOS_DIR/CodexExportApp" --renderer-smoke
+"$MACOS_DIR/CodexExportApp" --termination-smoke
 
 case "$FINAL_APP" in
     "$PROJECT_DIR"/dist/*.app) ;;

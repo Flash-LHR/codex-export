@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var textSelectionShortcutMonitor: Any?
     private var isFinishingTermination = false
     private var isUpdateInstallationReserved = false
+    private let terminationCoordinator = ApplicationTerminationCoordinator()
     private let popover = NSPopover()
     private lazy var appServerClient = CodexAppServerClient(
         configuration: .init(clientVersion: Self.bundleVersion)
@@ -46,11 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         releaseInstallationReservation: { [weak self] in
             self?.releaseSoftwareUpdateInstallationReservation()
         },
-        requestTermination: {
-            DeferredApplicationTermination.schedule {
-                NSApplication.shared.terminate(nil)
-            }
-        }
+        requestTermination: { NSApplication.shared.terminate(nil) }
     )
 
     private static var bundleVersion: String {
@@ -69,6 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if RendererSmoke.isRequested {
             RendererSmoke.start()
+            return
+        }
+        if ApplicationTerminationSmoke.isRequested {
+            ApplicationTerminationSmoke.start()
             return
         }
 
@@ -145,16 +146,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
-        guard !isFinishingTermination else { return .terminateLater }
         isFinishingTermination = true
         removeOutsideClickMonitor()
         removeTextSelectionShortcutMonitor()
-        Task { @MainActor in
-            await softwareUpdate.shutdown()
-            await viewModel.shutdown()
-            sender.reply(toApplicationShouldTerminate: true)
-        }
-        return .terminateLater
+        return terminationCoordinator.reply(
+            prepare: { [weak self] in
+                guard let self else { return }
+                await softwareUpdate.shutdown()
+                await viewModel.shutdown()
+            },
+            retry: { sender.terminate(nil) }
+        )
     }
 
     func applicationDidResignActive(_ notification: Notification) {
